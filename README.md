@@ -340,7 +340,7 @@ output_data (2855, 4)
 test accuracy 0.9800350262697023
 ```
 
-5) Draw the DFN graph by running the script (**network_formation.py**) as follows. The 
+5) Draw the DFN graph by running the script (**network_formation.py**) as follows. 
 ```sh
 DeepFunctionalNetwork> python draw_graph.py -mode=d -dnn_name=obstacle -dfn_name=dfn_1
 neuron: 1 functions: ['neuron']
