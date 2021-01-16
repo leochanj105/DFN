@@ -47,7 +47,7 @@ class Individual:
 				w = np.ones(len(input_list), dtype=np.float32)
 				b = np.repeat(0.0000001, len(input_list)).astype('f')
 			connection_weight.append(w)
-			connection_bias.append(w)
+			connection_bias.append(b)
 
 		self.connection_weight = connection_weight
 		self.connection_bias = connection_bias
