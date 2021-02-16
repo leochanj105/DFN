@@ -13,9 +13,9 @@ from function import Function, FunctionSet
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 tf.logging.set_verbosity(tf.logging.ERROR)
-#gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.3)
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.3)
 #gpu_options = tf.GPUOptions(allow_growth = True)
-gpu_options = None
+#gpu_options = None
 
 class Individual:
 	def __init__(self, genotype):
@@ -30,7 +30,7 @@ class Individual:
 
 		self.update_graph()
 		self.update_valid_function()
-		self.init_connection_weight(random_init=False)
+		self.init_connection_weight(random_init=True)
 
 	def init_connection_weight(self, random_init=False):
 		input_table = self.genotype[1]
@@ -266,7 +266,7 @@ class Individual:
 class DFN:
 	def __init__(self, name, input_size, output_size, row_size, column_size,
 		primitive_function=None, primitive_function_distribution=None, use_neuron_function=1,
-		tf_batch_size=2000, hall_of_fame_size=4, fitness='mse', loss='cross_entropy'):
+		tf_batch_size=20000, hall_of_fame_size=4, fitness='mse', loss='cross_entropy', output_softmax=True):
 		self.name = name
 		if primitive_function is None:
 			self.primitive_function = []
@@ -299,6 +299,7 @@ class DFN:
 		self.tf_batch_size = tf_batch_size
 		self.fitness = fitness
 		self.loss = loss
+                self.output_softmax = output_softmax
 
 	def mse(self, output1, output2):
 		assert output1.shape == output2.shape
@@ -702,10 +703,12 @@ class DFN:
 		weight_to_regularize.append(connection_bias)
 		gathered_output = tf.gather(vector, output_idx, axis=1,
 			name='gathered_output')
-		#output = tf.add(tf.multiply(gathered_output, connection_weight),
-		#	connection_bias, name='output')
-		output = tf.nn.softmax(tf.add(tf.multiply(gathered_output, connection_weight),
-			connection_bias), name='output')
+                if self.output_softmax:
+    		        output = tf.nn.softmax(tf.add(tf.multiply(gathered_output, connection_weight),
+			        connection_bias), name='output')
+                else:       
+		        output = tf.add(tf.multiply(gathered_output, connection_weight),
+		    	connection_bias, name='output')
 
 		output_tensor_ = tf.placeholder(tf.float32, [None, self.output_size],
 			name='output_tensor_')
@@ -816,7 +819,7 @@ class DFN:
 		jacobian_idx=None, jacobian_data=None):
 
 		input_data = np.reshape(input_data, (input_data.shape[0], self.input_size))
-
+                print("input data shape: ", input_data.shape)
 		for i in range(generation):
 			population_score = []
 			for j in range(len(self.population)):
@@ -974,7 +977,7 @@ class DFN:
 				print('len(input_table[%d] != function.intput_size)' % i)
 				return False
 
-			if any(input_table[i]) >= min(output_table[i]):
+			if output_table[i] and any(input_table[i]) >= min(output_table[i]):
 				print('any(input_table[%d]) < min(output_table[i])' % i)
 				return False
 
@@ -1554,7 +1557,8 @@ class DFN:
 						break
 
 		if found == False:
-			input_function_table[-1].remove(old_function_num)
+                        if old_function_num in input_function_table[-1]:
+        			input_function_table[-1].remove(old_function_num)
 
 		return genotype
 

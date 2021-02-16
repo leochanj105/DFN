@@ -14,10 +14,12 @@ from dfn import DFN
 from function import FunctionSet
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+
 tf.logging.set_verbosity(tf.logging.ERROR)
 #np.set_printoptions(threshold=np.nan)
-#gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.3)
-
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.3)
+#gpu_options = None
 class FunctionEstimator:
 	def __init__(self, dnn_name, func_set, layers_str, input_size, output_size,
 		placeholder_size, fe_dir=None):
@@ -64,26 +66,30 @@ class FunctionEstimator:
 		self.placeholder_size = placeholder_size
 
 		with tf.Graph().as_default() as graph:
-			with tf.Session(graph=graph) as sess:
+			with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
 				self.buildNetwork(sess)
 				if not os.path.exists(self.fe_dir):
 					os.makedirs(self.fe_dir)
 				self.saveNetwork(sess)
 
-	def generate_random_data(self, func_set, program_size, input_data_size, input_low, input_high):
+	def generate_random_data(self, func_set, program_size, input_data_size, input_low, input_high, seperate=False, use_data = None):
 		print('generating %d program with input size %d and placholder size %d' % (program_size,
 			input_data_size, self.placeholder_size))
-
+                use_neuron = 0
 		function_pool = self.func_set.pool
 		data_list = []
 		label_list = []
-
+                indices = []
+                if(use_data is not None):
+                    size = use_data.shape[0]
+                    for i in range(program_size):
+                        indices.append(np.random.choice(size, input_data_size, replace=False))
 		for i in range(program_size):
 			primitive_idx = range(len(function_pool))
-			self.func_set.generate_primitive(primitive_idx, use_neuron_function=0)
+			self.func_set.generate_primitive(primitive_idx, use_neuron_function=use_neuron)
 			fd = DFN(self.dnn_name, self.input_size, self.output_size,
 				1, self.placeholder_size, primitive_function=self.func_set.primitive,
-				use_neuron_function=0)
+				use_neuron_function=use_neuron)
 			fd.generate_population(1)
 			for _ in range(np.random.randint(8)+1):
 				fd.mutate_individual(fd.population[0])
@@ -114,16 +120,19 @@ class FunctionEstimator:
 				occurrence_frequency_norm = np.asarray(occurrence_frequency) / occurrence_frequency_sum
 			else:
 				occurrence_frequency_norm = occurrence_frequency
-
-			input_data = np.random.uniform(low=input_low, high=input_high,
-				size=(input_data_size,self.input_size))
+                        input_data = None
+                        if use_data is None:
+        			input_data = np.random.uniform(low=input_low, high=input_high,
+	        			size=(input_data_size,self.input_size))
+                        else:
+                                input_data = use_data[indices[i]]
 
 			output_data = fd.execute_individual_tf(fd.population[0], input_data)
 
 			data = np.concatenate([input_data, output_data], axis=1)
 			data_list.append(data)
 
-			label = np.zeros((input_data_size, len(function_pool)))
+			label = np.zeros((input_data_size, len(function_pool) + use_neuron))
 			for idx in label_idx:
 				label[np.arange(label.shape[0]), idx] = occurrence_frequency_norm[idx]
 
@@ -131,35 +140,39 @@ class FunctionEstimator:
 
 			if i % 10 == 0 or i == program_size-1:
 				print(i)
-
-		dataset = np.concatenate(data_list)
-		label_set = np.concatenate(label_list, axis=0)
-		np.random.shuffle(dataset)
-		np.random.shuffle(label_set)
-		return dataset, label_set
+                if seperate:
+                        dataset = np.array(data_list)
+                        label_set = np.array(label_list)
+                        return dataset, label_set
+                else:
+        		dataset = np.concatenate(data_list)
+	        	label_set = np.concatenate(label_list, axis=0)
+		        np.random.shuffle(dataset)
+        		np.random.shuffle(label_set)
+    	        	return dataset, label_set
 
 	def generate_training_data(self, num_of_program=1000, input_data_size=1000,
-		input_low=0.0, input_high=1.0):
+		input_low=0.0, input_high=1.0, use_data = None):
 		print('total %d functions in function pool' % len(self.func_set.pool))
 
 		# generate data of [num_of_program*input_data_size, input_size+output+size]
 		# generate label of [num_of_program*input_data_size, len(self.func_set.pool)]
 		train_data, train_label = self.generate_random_data(self.func_set.pool,
-			num_of_program, input_data_size, input_low, input_high)
+			num_of_program, input_data_size, input_low, input_high, seperate = True, use_data = use_data)
 		print('train_data', train_data.shape)
 		print('train_label', train_label.shape)
 		np.save(self.train_data_path, train_data)
 		np.save(self.train_label_path, train_label)
 
 		test_data, test_label = self.generate_random_data(self.func_set.pool,
-			num_of_program//10, input_data_size//10, input_low, input_high)
+			num_of_program//10, input_data_size//10, input_low, input_high, use_data=use_data)
 		print('test_data', test_data.shape)
 		print('test_label', test_label.shape)
 		np.save(self.test_data_path, test_data)
 		np.save(self.test_label_path, test_label)
 
 		val_data, val_label = self.generate_random_data(self.func_set.pool,
-			num_of_program//10, input_data_size//10, input_low, input_high)
+			num_of_program//10, input_data_size//10, input_low, input_high, use_data=use_data)
 		print('val_data', val_data.shape)
 		print('val_label', val_label.shape)
 		np.save(self.val_data_path, val_data)
@@ -211,7 +224,8 @@ class FunctionEstimator:
 			weight_name = self.weight_base_name + str(layer_no-1)
 			bias_name = self.bias_base_name + str(layer_no-1)
 			neuron_name = self.neuron_base_name + str(layer_no)
-
+                        if(layer_no == len(layers)-1):
+                            print("output_name:--------------------->", neuron_name)
 			print('self.num_of_neuron_per_layer[layer_no]', self.num_of_neuron_per_layer[layer_no])
 	
 			if layer_type[layer_no] == "conv":
@@ -306,16 +320,22 @@ class FunctionEstimator:
 
 		# output
 		y = neurons[len(layers)-1]
-
+                print(y)
+                #res = tf.identify(y, name='result')
 		# correct labels
 		y_ = tf.placeholder(tf.float32, [None] + layers[-1], name='y_')
 
 		# define the loss function
 		regularization = 0.000001 * tf.nn.l2_loss(tf.concat(parameters_to_regularize, 0))
-		cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_*tf.log(y) + (1-y_)*tf.log(1-y),
+		cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_*tf.log(y) + (1-y_)*tf.log(1-tf.clip_by_value(y, clip_value_max=0.999999999, clip_value_min=0.0)),
 			reduction_indices=[1]), name='cross_entropy') + regularization
-		mse = tf.reduce_mean(tf.square(y_ - y), name='mse') + regularization
 
+		mse = tf.reduce_mean(tf.square(y_ - y), name='mse') + regularization
+                k = tf.constant(0.003)
+                base = tf.constant(1.0)
+                zero = tf.constant(0.0)
+		my_loss = tf.reduce_mean(-tf.reduce_sum(y_*tf.log(y) + (1-y_)*tf.log(1-tf.clip_by_value(y, clip_value_max=0.999999999, clip_value_min=0.0)),
+			reduction_indices=[1]) + k * tf.reduce_sum(y), name='my_loss') + regularization
 		# define diff
 		#correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(y_, 1),
 		#	name='correct_prediction')
@@ -349,11 +369,13 @@ class FunctionEstimator:
 		# get tensors
 		tensor_x_name = "neuron_0:0"
 		x = graph.get_tensor_by_name("neuron_-1:0")
+                output_y = graph.get_tensor_by_name("neuron_4:0")
 		y_ = graph.get_tensor_by_name("y_:0")
 		keep_prob_input = graph.get_tensor_by_name("keep_prob_input:0")
 		keep_prob = graph.get_tensor_by_name("keep_prob:0")
 		diff = graph.get_tensor_by_name("diff:0")
 		cross_entropy = graph.get_tensor_by_name("cross_entropy:0")
+                my_loss = graph.get_tensor_by_name("my_loss:0")
 		mse = graph.get_tensor_by_name("mse:0")
 
 		input_images_validation = validation_set[0]
@@ -365,21 +387,61 @@ class FunctionEstimator:
 
 		# train
 		for i in range(train_iteration):
-			input_data, labels = self.next_batch(train_set, batch_size)
+			input_data, labels = self.next_batch(train_set, batch_size, seperate=True)
 			input_data_reshpaed = \
 				np.reshape(input_data, ([-1] + x.get_shape().as_list()[1:]))
 
 			if i % (100) == 0 or i == (train_iteration-1):
-				train_diff, ce, m = sess.run([diff, cross_entropy, mse],
+				train_diff, ce, m, yy = sess.run([diff, cross_entropy, mse, output_y],
 					feed_dict={x: input_data_reshpaed,
 					y_: labels, keep_prob_input: 1.0, keep_prob: 1.0})
 				print("step %d, training diff: %f ce: %f mse: %f" % (i, train_diff, ce, m))
-			
+                                #print("y is: ", yy)
 				# validate
-				test_diff, ce, m = sess.run([diff, cross_entropy, mse], feed_dict={
+				test_diff, ce, m, oy, mloss = sess.run([diff, cross_entropy, mse, output_y, my_loss], feed_dict={
 					x: input_images_validation_reshaped, y_: labels_validation,
 					keep_prob_input: 1.0, keep_prob: 1.0})
-				print("step %d, Validation diff: %f ce: %f mse: %f" % (i, test_diff, ce, m))
+                                conf = 0.0
+                                accu = 0.0
+                                valid = 0.0
+                                for idx in range(0, len(oy)):
+                                    outy = sess.run([output_y], feed_dict={x:input_images_validation_reshaped[idx:idx+1], 
+                                        y_:labels_validation[idx:idx+1],keep_prob_input:1.0, keep_prob: 1.0})[0][0]
+                                    realy = labels_validation[idx]
+                                    num_nz = sum(realy != 0.0)
+                                    if(num_nz == 0):
+                                        continue
+                                    valid += 1.0
+                                    outy_t = [(j, outy[j]) for j in range(0, len(outy))]
+                                    realy_t = [(j, realy[j]) for j in range(0, len(realy))]
+                                    outy_t = sorted(outy_t, key=lambda tup:tup[1])[::-1]
+                                    realy_t = sorted(realy_t, key=lambda tup:tup[1])[::-1]
+                                    idx_out = sorted([tup[0] for tup in outy_t[:num_nz * 2]])
+                                    idx_out_exact = sorted([tup[0] for tup in outy_t[:num_nz]])
+                                    idx_real = sorted([tup[0] for tup in realy_t[:num_nz]])
+                                    num_id = 0.0
+                                    num_exact = 0.0
+                                    for j in range(0, len(idx_real)):
+                                        if(idx_real[j] in idx_out):
+                                            num_id += 1.0
+                                        if(idx_real[j] in idx_out_exact):
+                                            num_exact += 1.0
+                                    #if(idx < 3):
+                                        #print(input_images_validation_reshaped[idx:idx+1])
+                                        #print(len(oy))
+                                        #print(outy)
+                                        #print(outy_t)
+                                        #print(input_images_validation_reshaped[idx])
+                                     #   print(outy)
+                                      #  print(realy)
+                                       # print(idx_out)
+                                        #print(idx_real)
+                                        #print(num_id)
+                                    conf += (num_id / num_nz)
+                                    accu += (num_exact / num_nz)
+                                conf /= valid
+                                accu /= valid
+                                print("step %d, Validation diff: %f ce: %f mse: %f confidence: %f accuracy: %f my_loss: %f" % (i, test_diff, ce, m, conf, accu, mloss))
 
 				if i == 0:
 					lowest_diff = test_diff
@@ -448,9 +510,14 @@ class FunctionEstimator:
 				self.loadNetwork(sess)
 				return self.doInfer(sess, graph, data_set, label)
 
-	def next_batch(self, data_set, batch_size):
-		data = data_set[0]
-		label = data_set[1] # one-hot vectors
+	def next_batch(self, data_set, batch_size, seperate = False):
+       		data = data_set[0]
+        	label = data_set[1] # one-hot vectors                
+                if seperate:
+                        programs = data.shape[0]
+                        idx = np.random.randint(programs)
+                        data = data[idx]
+                        label = label[idx]
 
 		data_num = np.random.choice(data.shape[0], size=batch_size, replace=False)
 		batch = data[data_num,:]
@@ -544,11 +611,14 @@ def main(args):
 		args.dnn_name), os.path.splitext(os.path.basename(__file__))[0])
 	fe_file_name = os.path.splitext(os.path.basename(__file__))[0] + '.obj' 
 	fe_file_path = os.path.join(fe_dir, fe_file_name)
-	#print('fe_file_path', fe_file_path)
+	print('fe_file_path', fe_file_path)
 
 	fe = None
 	if os.path.exists(fe_file_path):
 		fe = pickle.load(open(fe_file_path, 'rb'))
+
+        if args.mode == 'p':
+                print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
 
 	if args.mode == 'c':
 		print('[c] creating a function estimator')
@@ -571,16 +641,20 @@ def main(args):
 
 		func_set = FunctionSet()
 		layers = str(args.input_size+args.output_size) + ',' + layers + \
-			',' + str(func_set.num_of_pool)
+			',' + str(func_set.num_of_pool )
 
 		#print('[c] layers:', layers)
+                print("num of func:", func_set.num_of_pool)
 		fe = FunctionEstimator(args.dnn_name, func_set, layers,
 			args.input_size, args.output_size, args.placeholder_size, fe_dir)
 
 	if args.mode == 'g':
 		print('[g] generating training data for the function estimator')
+                use_data = args.input_data
+                if(use_data is not None):
+                    use_data = np.load(args.input_data)
 		fe.generate_training_data(args.num_of_program, args.input_data_size,
-			args.input_low, args.input_high)
+			args.input_low, args.input_high, use_data=use_data)
 
 	elif args.mode == 't':
 		print('[t] training the function estimator')
@@ -622,18 +696,25 @@ def main(args):
 		output_data = np.reshape(output_data, [output_data.shape[0],-1])
 
 		input_to_estimator = np.concatenate([input_data, output_data], axis=1)
-		#print('input_to_estimator', input_to_estimator.shape)
+		print('input_to_estimator', input_to_estimator.shape)
 		estimator_output = fe.infer(input_to_estimator)
-		#print('estimator_output.shape', estimator_output.shape)
+		print('estimator_output.shape', estimator_output.shape)
 		#print('estimator_output', estimator_output)
 		distribution = np.average(estimator_output, axis=0)
 		#print(distribution)
-		#print('distribution.shape', distribution.shape)
+		print('distribution.shape', distribution.shape)
+                primitives = fe.func_set.primitive
+                distribution_list=[]
+                for i in range(distribution.shape[0]):
+                    distribution_list.append((primitives[i][0], distribution[i]))
 		np.save(fe.distribution_file_path, distribution)
 		print('function estimation completed')
 
 		#sorted_distribution = np.sort(distribution)[::-1]
-		#print('sorted_distribution', sorted_distribution)
+                sorted_distribution = sorted(distribution_list, key=lambda tup: tup[1])[::-1]
+                print('sorted_distribution:')
+                for tup in sorted_distribution:
+                    print(tup)
 		return
 
 	if not os.path.exists(fe_dir):
@@ -653,7 +734,7 @@ def parse_arguments(argv):
 	parser.add_argument('-output_data', type=str, help='output', default=None)
 	parser.add_argument('-num_of_program', type=int, help='num_of_program', default=100)
 	parser.add_argument('-input_data_size', type=int, help='input_data_size', default=1000)
-	parser.add_argument('-train_iteration', type=int, help='train_iteration', default=10000)
+	parser.add_argument('-train_iteration', type=int, help='train_iteration', default=1000)
 	parser.add_argument('-train_batch_size', type=int, help='train_batch_size', default=100)
 	parser.add_argument('-input_low', type=float, help='input_low', default=0.0)
 	parser.add_argument('-input_high', type=float, help='input_high', default=1.0)

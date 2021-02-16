@@ -18,7 +18,8 @@ from function_estimator import FunctionEstimator
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 tf.logging.set_verbosity(tf.logging.ERROR)
 #np.set_printoptions(threshold=np.nan)
-#gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.3)
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.3)
+#gpu_options = None
 
 def main(args):
 	np.random.seed(args.seed)
@@ -100,7 +101,9 @@ def main(args):
 			args.placeholder_size, primitive_function=func_set.primitive,
 			primitive_function_distribution=function_distribution,
 			use_neuron_function=args.use_neuron_function,
-			fitness=args.fitness, loss=args.loss)
+                        tf_batch_size=args.batch_size,
+			fitness=args.fitness, loss=args.loss,
+                        output_softmax=args.output_softmax)
 
 		print('generating population of size %d' % (args.population_size))
 		dfn.generate_population(args.population_size)
@@ -200,6 +203,9 @@ def main(args):
 			print(ground_truth.shape)
 			dfn_output = np.argmax(dfn_output_data, axis=1)
 			print(dfn_output.shape)
+                        print("output_data: ", output_data[:10])
+                        print("ground_truth: ", ground_truth[:10])
+                        print("dfn: ", dfn_output_data[:10])
 			accuracy = np.mean(ground_truth == dfn_output)
 			print('test accuracy', accuracy)
 
@@ -219,6 +225,10 @@ def main(args):
 		print('population[%d] frozen to %s' % (args.population_no, frozen_file_path))
 
 		return
+        elif args.mode == 'p':
+                print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
+
+                return
 
 	if not os.path.exists(dfn_dir):
 		os.makedirs(dfn_dir)
@@ -237,6 +247,7 @@ def parse_arguments(argv):
 	parser.add_argument('-generation', type=int, help='generation', default=100000)
 	parser.add_argument('-lamb', type=int, help='lamb', default=4)
 	parser.add_argument('-saving_cycle', type=int, help='saving_cycle', default=1)
+	parser.add_argument('-batch_size', type=int, help='batch_size', default=2000)
 	parser.add_argument('-input_data', type=str, help='input_data', default=None)
 	parser.add_argument('-output_data', type=str, help='output_data', default=None)
 	parser.add_argument('-val_input_data', type=str, help='val_input_data', default=None)
@@ -250,6 +261,7 @@ def parse_arguments(argv):
 	parser.add_argument('-save', type=int, help='save', default=0)
 	parser.add_argument('-seed', type=int, help='seed', default=0)
 	parser.add_argument('-population_no', type=int,	help='population_no', default=0)
+	parser.add_argument('-output_softmax', type=bool, help='output_softmax', default=True)
 
 	return parser.parse_args(argv)
 

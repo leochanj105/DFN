@@ -64,7 +64,8 @@ class FunctionSet:
 				list(functions.statistics.functions.items()) + \
 				list(functions.linalg.functions.items()) + \
 				list(functions.activation.functions.items()) + \
-				list(functions.trigonometric.functions.items())
+				list(functions.trigonometric.functions.items()) 
+#                                list(functions.neuron.functions.items())
 		else:
 			self.pool = pool
 
